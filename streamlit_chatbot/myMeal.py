@@ -1,52 +1,110 @@
 import streamlit as st
+import requests
 import random
 
-st.title("🍽️ Simple Weekly Meal Planner")
+st.set_page_config(page_title="Nutrition Meal Planner", layout="wide")
+st.title("🍽️ Smart Meal Planner with 🧬 Nutrition Data")
 
-days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+API_KEY = "14f2e049c4d54a5caa6ccd6e8c9718d6" 
 
-# Simple meal lists
-breakfasts = ["Oatmeal & Berries","Yogurt Parfait","Avocado Toast","Smoothie Bowl"]
-lunches    = ["Grilled Chicken Salad","Veggie Wrap","Quinoa Bowl","Sushi Roll"]
-dinners    = ["Salmon & Veggies","Stir-Fry Tofu","Beef Tacos","Pasta Primavera"]
+days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+meal_types = [("B", "Breakfast"), ("L", "Lunch"), ("D", "Dinner")]
 
-# Keep plan in session
-if "plan" not in st.session_state:
-    st.session_state.plan = {day: {"B": "","L": "","D": ""} for day in days}
+# Initialize session state
+for d in days:
+    for code, _ in meal_types:
+        key = f"{d}_{code}"
+        if key not in st.session_state:
+            st.session_state[key] = {"name": "", "cal": "", "protein": "", "carbs": "", "fat": ""}
+        if f"suggestions_{key}" not in st.session_state:
+            st.session_state[f"suggestions_{key}"] = []
 
-# Helper to pick a random meal by type
-def suggest(day, meal_type):
-    lists = {"B": breakfasts, "L": lunches, "D": dinners}
-    st.session_state.plan[day][meal_type] = random.choice(lists[meal_type])
+# Spoonacular recipe search
+def search_recipes(query):
+    url = f"https://api.spoonacular.com/recipes/complexSearch"
+    params = {
+        "apiKey": API_KEY,
+        "query": query,
+        "number": 6,
+        "addRecipeNutrition": True
+    }
+    res = requests.get(url, params=params)
+    res.raise_for_status()
+    return res.json().get("results", [])
 
-st.subheader("Plan Your Week")
-for day in days:
-    st.write(f"**{day}**")
-    cols = st.columns([3,1,3,1,3,1])
-    # Breakfast
-    with cols[0]:
-        st.text_input("Breakfast", key=f"{day}_B", value=st.session_state.plan[day]["B"])
-    with cols[1]:
-        if st.button("Suggest", key=f"sugg_{day}_B"):
-            suggest(day, "B")
-    # Lunch
-    with cols[2]:
-        st.text_input("Lunch", key=f"{day}_L", value=st.session_state.plan[day]["L"])
-    with cols[3]:
-        if st.button("Suggest", key=f"sugg_{day}_L"):
-            suggest(day, "L")
-    # Dinner
-    with cols[4]:
-        st.text_input("Dinner", key=f"{day}_D", value=st.session_state.plan[day]["D"])
-    with cols[5]:
-        if st.button("Suggest", key=f"sugg_{day}_D"):
-            suggest(day, "D")
+# Generate random meals from search terms
+def generate_all():
+    for d in days:
+        for code, label in meal_types:
+            results = search_recipes(label)
+            if results:
+                recipe = random.choice(results)
+                fill_meal(d, code, recipe)
 
-# Show summary
+# Fill meal slot
+def fill_meal(day, code, data):
+    key = f"{day}_{code}"
+    st.session_state[key] = {
+        "name": data["title"],
+        "cal": f'{int(data["nutrition"]["nutrients"][0]["amount"])} kcal',
+        "protein": f'{data["nutrition"]["nutrients"][1]["amount"]}g',
+        "fat": f'{data["nutrition"]["nutrients"][2]["amount"]}g',
+        "carbs": f'{data["nutrition"]["nutrients"][3]["amount"]}g'
+    }
+
+# 📌 Search Box
+st.subheader("🔍 Search Meals")
+search_term = st.text_input("Enter a food keyword (e.g. 'curry', 'salad', 'pasta')")
+
+selected_day = st.selectbox("Select day to apply result:", days)
+selected_meal = st.selectbox("Select meal type:", [label for _, label in meal_types])
+
+if search_term:
+    try:
+        found = search_recipes(search_term)
+        if found:
+            st.write(f"**Found {len(found)} results:**")
+            for recipe in found:
+                col = st.columns([3, 1])
+                with col[0]:
+                    st.write(f"- {recipe['title']}")
+                    nutr = recipe["nutrition"]["nutrients"]
+                    st.caption(f"Calories: {int(nutr[0]['amount'])} kcal | Protein: {nutr[1]['amount']}g | Carbs: {nutr[3]['amount']}g | Fat: {nutr[2]['amount']}g")
+                with col[1]:
+                    if st.button("Use this", key=f"fill_{recipe['id']}"):
+                        code = [c for c, l in meal_types if l == selected_meal][0]
+                        fill_meal(selected_day, code, recipe)
+        else:
+            st.warning("No matches found.")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
 st.markdown("---")
-st.subheader("📅 Your Plan")
+st.button("🎲 Generate All Meals", on_click=generate_all)
+
+# 📝 Weekly Planner
+st.subheader("📋 Plan Your Week")
+
 for day in days:
-    b = st.session_state.plan[day]["B"] or "–"
-    l = st.session_state.plan[day]["L"] or "–"
-    d = st.session_state.plan[day]["D"] or "–"
-    st.write(f"**{day}** • Breakfast: {b}  |  Lunch: {l}  |  Dinner: {d}")
+    st.write(f"### {day}")
+    cols = st.columns(3)
+    for i, (code, label) in enumerate(meal_types):
+        key = f"{day}_{code}"
+        with cols[i]:
+            st.write(f"**{label}**")
+            meal = st.session_state[key]
+            st.text_input("Meal", value=meal["name"], key=f"{key}_name", disabled=True)
+            st.caption(f"Calories: {meal['cal']} | Protein: {meal['protein']} | Carbs: {meal['carbs']} | Fat: {meal['fat']}")
+
+# 📅 Summary
+st.markdown("---")
+st.subheader("📊 Weekly Summary")
+
+for day in days:
+    b = st.session_state[f"{day}_B"]
+    l = st.session_state[f"{day}_L"]
+    d = st.session_state[f"{day}_D"]
+    st.write(f"**{day}**")
+    st.markdown(f"- 🍳 **Breakfast**: {b['name']} ({b['cal']})")
+    st.markdown(f"- 🍱 **Lunch**: {l['name']} ({l['cal']})")
+    st.markdown(f"- 🍲 **Dinner**: {d['name']} ({d['cal']})")
